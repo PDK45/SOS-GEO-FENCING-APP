@@ -37,14 +37,6 @@ SafeSoul is an AI-assisted safety application designed to provide proactive prot
 
 ---
 
-## 📸 Screenshots
-
-| Safe Zone Active | SOS Triggered | SMS Alert |
-|:---:|:---:|:---:|
-| *(Add Screenshot Here)* | *(Add Screenshot Here)* | *(Add Screenshot Here)* |
-
----
-
 ## ⚙️ How to Run
 
 ### Prerequisites
@@ -67,9 +59,6 @@ SafeSoul is an AI-assisted safety application designed to provide proactive prot
     ```bash
     flutter run
     ```
-
-*Note: For the SMS and GPS features to work, you must accept the Android permission prompts upon first launch.*
-
 ---
 
 ## 🔮 Future Roadmap (Post-Hackathon)
