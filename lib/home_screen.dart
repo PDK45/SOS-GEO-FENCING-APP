@@ -2,9 +2,9 @@
 
 import 'package:flutter/material.dart';
 import 'package:sensors_plus/sensors_plus.dart';
+import 'package:geolocator/geolocator.dart';
 import 'dart:async';
-
-import 'alert_logic.dart'; // Import the core alert logic
+import 'alert_logic.dart' as app_logic; 
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -14,182 +14,196 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  StreamSubscription? _accelerometerSubscription;
-  bool isMonitoring = true; // Use this to toggle monitoring
+  StreamSubscription? _accelSub;
+  StreamSubscription? _geoSub;
+  bool isMonitoring = true; 
+  
+  // Console Logs List
+  List<String> logs = ["System Initialized...", "Monitoring Active."];
+  ScrollController _logScrollController = ScrollController();
 
   @override
   void initState() {
     super.initState();
-    _startBackgroundMonitoring();
+    _startSensors();
+    _startGeoFencing();
+    
+    // Connect the Logic Log to this UI
+    app_logic.onLogUpdate = (String message) {
+      if (mounted) {
+        setState(() {
+          logs.add("${DateTime.now().hour}:${DateTime.now().minute}:${DateTime.now().second} > $message");
+          // Auto-scroll to bottom
+          Future.delayed(const Duration(milliseconds: 100), () {
+             if (_logScrollController.hasClients) {
+               _logScrollController.animateTo(
+                 _logScrollController.position.maxScrollExtent, 
+                 duration: const Duration(milliseconds: 300), 
+                 curve: Curves.easeOut);
+             }
+          });
+        });
+      }
+    };
+
+    Timer.periodic(const Duration(seconds: 1), (timer) { if(mounted) setState((){}); });
   }
 
   @override
   void dispose() {
-    _accelerometerSubscription?.cancel();
+    _accelSub?.cancel();
+    _geoSub?.cancel();
     super.dispose();
   }
 
-  // --- Feature 3: Shake Detection Logic ---
-  void _startBackgroundMonitoring() {
-    // Listen to accelerometer events for shake detection (Feature 3)
-    _accelerometerSubscription = accelerometerEvents.listen((AccelerometerEvent event) {
-      if (!isMonitoring) return;
-
-      double x = event.x;
-      double y = event.y;
-      double z = event.z;
-      
-      // Simple shake detection logic: rapid change in total acceleration
-      // A more robust shake detection tracks peaks and valleys.
-      if ((x.abs() > 25.0 || y.abs() > 25.0 || z.abs() > 25.0) && currentStatus == AlertStatus.safe) {
-        // Debounce: ensure only one alert is triggered per event
-        setState(() {
-            triggerAlert(reason: 'Panic Shake Gesture');
-        });
-      }
-      
-      // We will add the Basic Fall Detection (Feature 5) logic here later.
+  void _launchFakeCall() {
+    app_logic.triggerFakeCall(); 
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Fake Call in 10s...")));
+    Future.delayed(const Duration(seconds: 10), () {
+      if(mounted) Navigator.push(context, MaterialPageRoute(builder: (context) => const FakeCallScreen()));
     });
   }
 
-  // Helper to visually update the status
-  void _updateStatus() {
-    setState(() {}); // Rebuilds the UI to reflect the currentStatus change
+  void _startSensors() {
+    _accelSub = accelerometerEvents.listen((event) {
+      if (!isMonitoring) return;
+      double magnitude = (event.x * event.x + event.y * event.y + event.z * event.z);
+      if (magnitude > 600.0 && app_logic.currentStatus == app_logic.AlertStatus.safe) { 
+        app_logic.triggerAlert(reason: 'Panic Shake');
+      }
+    });
+  }
+
+  void _startGeoFencing() {
+    _geoSub = Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(accuracy: LocationAccuracy.high, distanceFilter: 100),
+    ).listen((Position position) {
+      if (!isMonitoring || app_logic.currentStatus != app_logic.AlertStatus.safe) return;
+      
+      bool isInside = false;
+      for (var zone in app_logic.safeZones) {
+        double dist = Geolocator.distanceBetween(position.latitude, position.longitude, zone.latitude, zone.longitude);
+        if (dist <= zone.radiusMeters) { isInside = true; break; }
+      }
+
+      if (!isInside && app_logic.safeZones.isNotEmpty) {
+        app_logic.triggerAlert(reason: 'Geo-Fence Exit');
+      }
+    });
   }
 
   @override
   Widget build(BuildContext context) {
-    // Re-check status from external logic file
-    if (currentStatus != AlertStatus.safe) {
-      // Re-initialize timer if the app was backgrounded/reopened 
-      // (Advanced: requires lifecycle management, simple solution for prototype: update status)
-      if (currentStatus == AlertStatus.tier1 && alertTimer?.isActive == false) {
-        // If the timer expired while the app was closed, force escalation (simple recovery)
-        WidgetsBinding.instance.addPostFrameCallback((_) => escalateToTier2());
-      }
-    }
-    
-    return Scaffold(
-      appBar: AppBar(title: const Text('3. Safety Dashboard')),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            // Current Safety Status
-            _buildSafetyStatusIndicator(),
-            
-            const SizedBox(height: 50),
+    bool isAlert = app_logic.currentStatus != app_logic.AlertStatus.safe;
 
-            // Large SOS Button (Manual Activation)
-            GestureDetector(
-              onTap: () {
-                setState(() {
-                  if (currentStatus == AlertStatus.safe) {
-                    triggerAlert(reason: 'Manual Button Press');
-                  } else {
-                    confirmSafety(); // Manual Tap cancels the alert if active
-                  }
-                });
-              },
-              child: Container(
-                width: 200,
-                height: 200,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: currentStatus == AlertStatus.safe ? Colors.red : Colors.green,
-                  boxShadow: [
-                    BoxShadow(
-                      color: (currentStatus != AlertStatus.safe ? Colors.green.shade900 : Colors.red.shade900).withOpacity(0.5),
-                      spreadRadius: 8,
-                      blurRadius: 10,
-                      offset: const Offset(0, 3),
-                    ),
-                  ],
-                ),
-                child: Center(
-                  child: Text(
-                    currentStatus == AlertStatus.safe ? 'SOS\nTAP TO START' : 'SAFETY CONFIRMED\nTAP TO CANCEL',
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
+    return Scaffold(
+      appBar: AppBar(title: const Text('SafeSoul Live Dashboard')),
+      body: Column(
+        children: [
+          const SizedBox(height: 10),
+          
+          // 1. Status Card
+          Container(
+            padding: const EdgeInsets.all(15),
+            margin: const EdgeInsets.symmetric(horizontal: 20),
+            decoration: BoxDecoration(
+              color: isAlert ? Colors.red.shade100 : Colors.green.shade100,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: isAlert ? Colors.red : Colors.green, width: 2),
+            ),
+            child: Text(
+              isAlert ? "🚨 ALERT ACTIVE 🚨" : "🛡️ SYSTEM SECURE",
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: isAlert ? Colors.red : Colors.green.shade800),
+            ),
+          ),
+
+          const SizedBox(height: 20),
+
+          // 2. SOS Button
+          GestureDetector(
+            onTap: () => setState(() {
+              if (isAlert) app_logic.confirmSafety();
+              else app_logic.triggerAlert(reason: "Manual SOS Button");
+            }),
+            child: CircleAvatar(
+              radius: 70,
+              backgroundColor: isAlert ? Colors.green : Colors.red,
+              child: Text(isAlert ? "I AM\nSAFE" : "SOS", textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
+            ),
+          ),
+          
+          const SizedBox(height: 20),
+
+          // 3. Fake Call Button
+          ElevatedButton.icon(
+            onPressed: _launchFakeCall,
+            icon: const Icon(Icons.call),
+            label: const Text("Fake Call"),
+          ),
+
+          const Spacer(),
+
+          // 4. HACKATHON CONSOLE (Visual Log)
+          Container(
+            height: 150,
+            width: double.infinity,
+            margin: const EdgeInsets.all(10),
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: Colors.black,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: Colors.greenAccent),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(">> SYSTEM LOGS", style: TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontFamily: 'monospace')),
+                const Divider(color: Colors.greenAccent, height: 10),
+                Expanded(
+                  child: ListView.builder(
+                    controller: _logScrollController,
+                    itemCount: logs.length,
+                    itemBuilder: (ctx, i) => Text(
+                      logs[i], 
+                      style: const TextStyle(color: Colors.white, fontSize: 12, fontFamily: 'monospace')
                     ),
                   ),
                 ),
-              ),
+              ],
             ),
-            const SizedBox(height: 40),
-
-            // Tier 1 Confirmation UI (Feature 4)
-            if (currentStatus == AlertStatus.tier1) 
-              _buildConfirmationBar(context),
-              
-            if (currentStatus == AlertStatus.tier2 || currentStatus == AlertStatus.tier3)
-              const Text('ALERT SENT! Emergency contacts have been notified.', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
-
-            // Geo-Fence Status Placeholder
-            const SizedBox(height: 20),
-            Text('Geo-Fence Monitoring: ${isMonitoring ? 'Active' : 'Inactive'}', style: TextStyle(color: isMonitoring ? Colors.green : Colors.grey)),
-            Text('Current Status: ${currentStatus.name.toUpperCase()}', style: TextStyle(color: currentStatus != AlertStatus.safe ? Colors.red : Colors.green)),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSafetyStatusIndicator() {
-    String statusText;
-    Color color;
-
-    switch (currentStatus) {
-      case AlertStatus.safe:
-        statusText = 'You are SAFE. Monitoring Active.';
-        color = Colors.green;
-        break;
-      case AlertStatus.tier1:
-        statusText = 'SAFETY CHECK: Tap to confirm you are safe!';
-        color = Colors.orange;
-        break;
-      case AlertStatus.tier2:
-        statusText = 'TIER 2 ALERT: Contacts Notified. Police Alert in ${alertTimer?.tick ?? 0}s.';
-        color = Colors.red.shade700;
-        break;
-      case AlertStatus.tier3:
-        statusText = 'TIER 3 ALERT: Authorities Notified.';
-        color = Colors.red.shade900;
-        break;
-    }
-
-    return Container(
-      padding: const EdgeInsets.all(12),
-      margin: const EdgeInsets.symmetric(horizontal: 20),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
-        border: Border.all(color: color, width: 2),
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Text(statusText, textAlign: TextAlign.center, style: TextStyle(color: color, fontWeight: FontWeight.bold)),
-    );
-  }
-
-  Widget _buildConfirmationBar(BuildContext context) {
-    // Simple bar to visualize the 5-minute confirmation window
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
-      color: Colors.yellow.shade100,
-      child: Column(
-        children: [
-          const Text('AUTOMATIC ALERT TRIGGERED', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.black87)),
-          const Text('Confirm safety within 5 minutes or contacts will be notified.', style: TextStyle(color: Colors.black54)),
-          const SizedBox(height: 10),
-          // In a final app, this would be a real countdown bar.
-          LinearProgressIndicator(
-            value: 0.5, // Placeholder for demonstration
-            backgroundColor: Colors.grey.shade300,
-            valueColor: const AlwaysStoppedAnimation<Color>(Colors.orange),
           ),
         ],
+      ),
+    );
+  }
+}
+
+// --- FAKE CALL SCREEN ---
+class FakeCallScreen extends StatelessWidget {
+  const FakeCallScreen({super.key});
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+             const Icon(Icons.person, size: 80, color: Colors.white),
+             const SizedBox(height: 20),
+             const Text("Mom", style: TextStyle(color: Colors.white, fontSize: 32)),
+             const Text("Mobile", style: TextStyle(color: Colors.white54)),
+             const SizedBox(height: 100),
+             Row(
+               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+               children: [
+                 FloatingActionButton(onPressed: () => Navigator.pop(context), backgroundColor: Colors.red, child: const Icon(Icons.call_end)),
+                 FloatingActionButton(onPressed: () => Navigator.pop(context), backgroundColor: Colors.green, child: const Icon(Icons.call)),
+               ],
+             )
+          ],
+        ),
       ),
     );
   }
