@@ -1,9 +1,12 @@
 // lib/alert_logic.dart
 
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io'; // Import for Platform check
 import 'package:telephony/telephony.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter/material.dart';
 
 // --- Shared Data ---
 class SafeZone {
@@ -22,25 +25,43 @@ class SafeZone {
     this.startTimeHour = 0,
     this.endTimeHour = 24,
   });
+
   double get radiusMeters => radiusKm * 1000;
+
+  // Serialization for SharedPreferences
+  Map<String, dynamic> toJson() => {
+    'name': name,
+    'latitude': latitude,
+    'longitude': longitude,
+    'radiusKm': radiusKm,
+    'startTimeHour': startTimeHour,
+    'endTimeHour': endTimeHour,
+  };
+
+  factory SafeZone.fromJson(Map<String, dynamic> json) => SafeZone(
+    name: json['name'],
+    latitude: json['latitude'],
+    longitude: json['longitude'],
+    radiusKm: json['radiusKm'],
+    startTimeHour: json['startTimeHour'],
+    endTimeHour: json['endTimeHour'],
+  );
 }
 
-// Global Variables
+// Global Variables (Dynamic)
 String userName = 'User';
-String userBloodGroup = 'A+';
-String contact1 = '7448346783'; // Replace with real number for demo
-String contact2 = '8072564784';
+String userBloodGroup = 'Unknown';
+String contact1 = ''; 
+String contact2 = '';
 String authorityContact = '100';
 
-List<SafeZone> safeZones = [
-  SafeZone(name: 'College (Default)', latitude: 10.9926, longitude: 76.9800, radiusKm: 4.0),
-];
+List<SafeZone> safeZones = [];
 
 enum AlertStatus { safe, tier1, tier2, tier3, fakeCall }
 AlertStatus currentStatus = AlertStatus.safe;
 Timer? alertTimer;
 
-// *** NEW: Callback to send logs to the UI ***
+// *** Callback to send logs to the UI ***
 Function(String)? onLogUpdate; 
 
 void log(String message) {
@@ -48,6 +69,61 @@ void log(String message) {
   if (onLogUpdate != null) {
     onLogUpdate!(message); // Send to UI Console
   }
+}
+
+// --- Data Persistence ---
+Future<void> loadConfig() async {
+  final prefs = await SharedPreferences.getInstance();
+  
+  // Load Profile
+  userName = prefs.getString('userName') ?? 'User';
+  userBloodGroup = prefs.getString('userBloodGroup') ?? 'Unknown';
+  contact1 = prefs.getString('contact1') ?? '';
+  contact2 = prefs.getString('contact2') ?? '';
+  
+  // Load Safe Zones
+  List<String>? zoneList = prefs.getStringList('safeZones');
+  if (zoneList != null) {
+    safeZones = zoneList.map((z) => SafeZone.fromJson(jsonDecode(z))).toList();
+  }
+  
+  log("💾 Configuration Loaded. User: $userName, Zones: ${safeZones.length}");
+}
+
+Future<void> updateUser(String name, String phone, String blood) async {
+  final prefs = await SharedPreferences.getInstance();
+  userName = name;
+  userBloodGroup = blood;
+  await prefs.setString('userName', name);
+  await prefs.setString('userPhone', phone);
+  await prefs.setString('userBloodGroup', blood);
+  log("👤 User Profile Updated: $name");
+}
+
+Future<void> updateContacts(String c1, String c2) async {
+  final prefs = await SharedPreferences.getInstance();
+  contact1 = c1;
+  contact2 = c2;
+  await prefs.setString('contact1', c1);
+  await prefs.setString('contact2', c2);
+  log("📞 Contacts Updated.");
+}
+
+Future<void> addSafeZone(SafeZone zone) async {
+  final prefs = await SharedPreferences.getInstance();
+  safeZones.add(zone);
+  
+  List<String> zoneList = safeZones.map((z) => jsonEncode(z.toJson())).toList();
+  await prefs.setStringList('safeZones', zoneList);
+  
+  log("📍 Safe Zone Added: ${zone.name}");
+}
+
+Future<void> clearSafeZones() async {
+  final prefs = await SharedPreferences.getInstance();
+  safeZones.clear();
+  await prefs.remove('safeZones');
+  log("🗑️ Safe Zones Cleared.");
 }
 
 // --- Feature 1: Location & Offline SMS ---
@@ -100,15 +176,27 @@ void triggerAlert({required String reason}) async {
       'Blood: $userBloodGroup\n'
       'Loc: $locationLink';
 
-  // 3. SEND SMS IMMEDIATELY (No Timer)
-  final telephony = Telephony.instance;
-  log("📨 Sending SMS to Contact 1 ($contact1)...");
-  telephony.sendSms(to: contact1, message: message);
-  
-  log("📨 Sending SMS to Contact 2 ($contact2)...");
-  telephony.sendSms(to: contact2, message: message);
-  
-  log("✅ SMS Sent Successfully to all contacts.");
+  // 3. SEND SMS (Platform Safe)
+  if (Platform.isAndroid) {
+    final telephony = Telephony.instance;
+    
+    if (contact1.isNotEmpty) {
+      log("📨 Sending SMS to Contact 1 ($contact1)...");
+      telephony.sendSms(to: contact1, message: message);
+    } else {
+      log("⚠️ Contact 1 not set!");
+    }
+    
+    if (contact2.isNotEmpty) {
+      log("📨 Sending SMS to Contact 2 ($contact2)...");
+      telephony.sendSms(to: contact2, message: message);
+    }
+    log("✅ SMS Process Completed.");
+  } else {
+    log("💻 PLATFORM: SMS Simulation Mode (Not Android)");
+    log("📝 WOULD SEND: $message");
+  }
+
   log("⏳ Police Escalation Timer started (10 mins).");
 
   // 4. Start Timer ONLY for Police Escalation (Tier 3)
@@ -125,8 +213,12 @@ void escalateToTier3() async {
   String locationLink = await getLocationLink(); 
   String message = 'POLICE ALERT: $userName Critical. Loc: $locationLink. Dispatch immediately.';
   
-  Telephony.instance.sendSms(to: authorityContact, message: message);
-  log("🚓 Authority SMS Sent.");
+  if (Platform.isAndroid) {
+     Telephony.instance.sendSms(to: authorityContact, message: message);
+     log("🚓 Authority SMS Sent.");
+  } else {
+     log("💻 PLATFORM: Simulated Authority SMS: $message");
+  }
 }
 
 void confirmSafety() {

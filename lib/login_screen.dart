@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
-import 'safe_zone_screen.dart'; // Ensure this line is present and correct
+import 'safe_zone_screen.dart'; 
+import 'alert_logic.dart' as app_logic; // Import logic
+
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
 
@@ -21,22 +23,24 @@ class _LoginScreenState extends State<LoginScreen> {
   String? _contact2Name;
   String? _contact2Number;
 
-  void _saveProfileAndNavigate() {
+  void _saveProfileAndNavigate() async {
     if (_formKey.currentState!.validate()) {
       _formKey.currentState!.save();
       
-      // *** PLACEHOLDER for DB SAVING ***
-      // In the final app, this is where you insert data into the 'user_profile' and 
-      // 'emergency_contacts' tables in SQLite/Firestore.
+      // Save Real Data to Logic & Persistence
+      await app_logic.updateUser(_name!, _phoneNumber!, _bloodGroup!);
+      await app_logic.updateContacts(_contact1Number!, _contact2Number!);
 
-      print('--- User Profile Saved (SIMULATED) ---');
-      print('Name: $_name, Phone: $_phoneNumber, Blood Group: $_bloodGroup');
-      print('Contact 1: $_contact1Name, Number: $_contact1Number');
+      print('--- User Profile Saved (REAL) ---');
+      print('Name: $_name, Blood: $_bloodGroup');
+      print('Contacts Updated: $_contact1Number, $_contact2Number');
       
+      if (!mounted) return;
+
       // Navigate to the next screen (Safe Zone Configuration)
       Navigator.push(
         context,
-        MaterialPageRoute(builder: (context) => SafeZoneScreen()),
+        MaterialPageRoute(builder: (context) => const SafeZoneScreen()),
       );
     }
   }
@@ -44,92 +48,112 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('1. Setup Profile & Contacts')),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16.0),
-        child: Form(
-          key: _formKey,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: <Widget>[
-              // User Details Section
-              _buildSectionTitle('Personal & Medical Details (Feature 6)'),
-              _buildTextFormField(
-                label: 'Full Name',
-                onSaved: (value) => _name = value,
-              ),
-              _buildTextFormField(
-                label: 'Phone Number (Your Mobile)',
-                keyboardType: TextInputType.phone,
-                onSaved: (value) => _phoneNumber = value,
-              ),
-              _buildTextFormField(
-                label: 'Blood Group (e.g., A+, O-)',
-                onSaved: (value) => _bloodGroup = value,
-                validator: (value) => value!.isEmpty ? 'Required for emergency response' : null,
-              ),
-              const SizedBox(height: 20),
-
-              // Emergency Contacts Section (Feature 4)
-              _buildSectionTitle('Emergency Contacts (Tier 2/3 Alerts)'),
-              _buildTextFormField(
-                label: 'Contact 1 Name',
-                onSaved: (value) => _contact1Name = value,
-              ),
-              _buildTextFormField(
-                label: 'Contact 1 Number',
-                keyboardType: TextInputType.phone,
-                onSaved: (value) => _contact1Number = value,
-              ),
-              _buildTextFormField(
-                label: 'Contact 2 Name',
-                onSaved: (value) => _contact2Name = value,
-              ),
-              _buildTextFormField(
-                label: 'Contact 2 Number (Authority/Family)',
-                keyboardType: TextInputType.phone,
-                onSaved: (value) => _contact2Number = value,
-              ),
-              const SizedBox(height: 30),
-
-              ElevatedButton(
-                onPressed: _saveProfileAndNavigate,
-                child: const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 12.0),
-                  child: Text('Save Profile & Setup Safe Zone', style: TextStyle(fontSize: 18)),
+      appBar: AppBar(title: const Text('Setup Profile')),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+          child: Form(
+            key: _formKey,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                const SizedBox(height: 10),
+                const Text(
+                  "Welcome to SafeSoul",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, letterSpacing: -0.5),
                 ),
-              ),
-            ],
+                const SizedBox(height: 5),
+                const Text(
+                  "Configure your safety protocols",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.grey, fontSize: 16),
+                ),
+                const SizedBox(height: 30),
+
+                // User Details Section
+                _buildSectionHeader('YOUR IDENTITY'),
+                _buildIOSGroup([
+                    _buildIOSTextField(label: 'Full Name', onSaved: (v) => _name = v),
+                    const Divider(height: 1, indent: 16),
+                    _buildIOSTextField(label: 'Phone Number', inputType: TextInputType.phone, onSaved: (v) => _phoneNumber = v),
+                    const Divider(height: 1, indent: 16),
+                    _buildIOSTextField(label: 'Blood Group', onSaved: (v) => _bloodGroup = v, isLast: true),
+                ]),
+                const SizedBox(height: 25),
+
+                // Emergency Contacts Section
+                _buildSectionHeader('EMERGENCY CONTACTS'),
+                _buildIOSGroup([
+                   _buildIOSTextField(label: 'Contact 1 Name', onSaved: (v) => _contact1Name = v),
+                   const Divider(height: 1, indent: 16),
+                   _buildIOSTextField(label: 'Contact 1 Number', inputType: TextInputType.phone, onSaved: (v) => _contact1Number = v),
+                ]),
+                const SizedBox(height: 15),
+                _buildIOSGroup([
+                   _buildIOSTextField(label: 'Contact 2 Name', onSaved: (v) => _contact2Name = v),
+                   const Divider(height: 1, indent: 16),
+                   _buildIOSTextField(label: 'Contact 2 Number', inputType: TextInputType.phone, onSaved: (v) => _contact2Number = v, isLast: true),
+                ]),
+                const SizedBox(height: 40),
+
+                ElevatedButton(
+                  onPressed: _saveProfileAndNavigate,
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    backgroundColor: const Color(0xFF007AFF),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  ),
+                  child: const Text('Continue', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600, color: Colors.white)),
+                ),
+                const SizedBox(height: 20),
+              ],
+            ),
           ),
         ),
       ),
     );
   }
 
-  Widget _buildSectionTitle(String title) {
+  Widget _buildSectionHeader(String title) {
     return Padding(
-      padding: const EdgeInsets.only(top: 10.0, bottom: 8.0),
+      padding: const EdgeInsets.only(left: 16, bottom: 8),
       child: Text(
         title,
-        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.red),
+        style: const TextStyle(fontSize: 13, color: Color(0xFF6E6E73), fontWeight: FontWeight.normal),
       ),
     );
   }
 
-  TextFormField _buildTextFormField({
-    required String label,
-    Function(String?)? onSaved,
-    TextInputType keyboardType = TextInputType.text,
-    String? Function(String?)? validator,
+  Widget _buildIOSGroup(List<Widget> children) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(children: children),
+    );
+  }
+
+  Widget _buildIOSTextField({
+    required String label, 
+    TextInputType inputType = TextInputType.text,
+    required Function(String?) onSaved,
+    bool isLast = false,
   }) {
     return TextFormField(
       decoration: InputDecoration(
         labelText: label,
-        border: const OutlineInputBorder(),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        filled: true,
+        fillColor: Colors.white,
+        border: InputBorder.none,
+        enabledBorder: InputBorder.none,
+        focusedBorder: InputBorder.none,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        labelStyle: const TextStyle(color: Colors.black54),
       ),
-      keyboardType: keyboardType,
-      validator: validator ?? (value) => value!.isEmpty ? 'This field is required' : null,
+      keyboardType: inputType,
+      validator: (value) => (value == null || value.isEmpty) ? 'Required' : null,
       onSaved: onSaved,
     );
   }
